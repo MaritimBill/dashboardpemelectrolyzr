@@ -115,7 +115,7 @@
 
     <script>
         const MQTT_BROKER = 'wss://broker.hivemq.com:8884/mqtt';
-        const TOPICS = { ARDUINO_DATA: 'pem/arduino/data', WEB_CONTROL: 'pem/web/control' };
+        const TOPICS = { ARDUINO_DATA: 'arduino/sensors', WEB_CONTROL: 'pem/web/control' };
         let mqttClient = null, trendChart = null, lastArduinoDataTime = 0, arduinoConnected = false;
         let dataHistory = { time: [], production: [], efficiency: [], safetyMargin: [] };
 
