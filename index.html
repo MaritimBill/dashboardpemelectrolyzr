@@ -207,17 +207,28 @@
         function updateDashboard(data) {
             // Only update if we have actual Arduino data
             if (data && arduinoConnected) {
-                updateValue('productionValue', data.production, '%'); updateBar('productionBar', data.production);
+                // Map Arduino MQTT fields to dashboard display fields
+                // Arduino sends: prodRateSet, slider, temperature, voltage, current, o2Purity, etc.
+                let prodValue = Math.min(100, Math.max(0, data.prodRateSet || data.slider || data.production || 0));
+                updateValue('productionValue', prodValue, '%'); 
+                updateBar('productionBar', prodValue);
+                
+                // Update slider element to sync with Arduino setpoint
+                if (data.slider !== undefined) {
+                    document.getElementById('productionSlider').value = Math.min(100, Math.max(0, data.slider));
+                    document.getElementById('sliderValue').textContent = Math.min(100, Math.max(0, data.slider)) + '%';
+                }
+                
                 updateValue('efficiencyValue', data.efficiency, '%'); updateBar('efficiencyBar', data.efficiency);
                 updateValue('safetyValue', data.safetyMargin, '%'); updateBar('safetyBar', data.safetyMargin);
-                updateValue('waterValue', data.water, '%'); updateBar('waterBar', data.water);
+                updateValue('waterValue', data.water_tank_l, '%'); updateBar('waterBar', data.water_tank_l);
                 updateValue('tempValue', data.temperature, '°C'); updateBar('tempBar', data.temperature);
-                updateValue('purityValue', data.purity, '%'); updateBar('purityBar', data.purity);
-                updateValue('oxygenValue', data.oxygen, '%'); updateBar('oxygenBar', data.oxygen);
-                updateValue('hydrogenValue', data.hydrogen, '%'); updateBar('hydrogenBar', data.hydrogen);
+                updateValue('purityValue', data.o2Purity, '%'); updateBar('purityBar', data.o2Purity);
+                updateValue('oxygenValue', data.o2ProductionRate, '%'); updateBar('oxygenBar', data.o2ProductionRate);
+                updateValue('hydrogenValue', data.h2ProductionRate, '%'); updateBar('hydrogenBar', data.h2ProductionRate);
                 updateValue('reserveValue', data.reserve, '%'); updateBar('reserveBar', data.reserve);
                 if (data.battery) { updateValue('batteryValue', data.battery, 'V'); updateBar('batteryBar', ((data.battery-11)/2)*100); }
-                if (data.safetySetpoint) document.getElementById('productionTarget').textContent = `Target: ${data.safetySetpoint.toFixed(1)}%`;
+                if (data.prodRateSet) document.getElementById('productionTarget').textContent = `Target: ${data.prodRateSet.toFixed(1)}%`;
                 document.getElementById('powerSource').textContent = data.powerSource || 'Grid';
                 document.getElementById('controllerStatus').textContent = data.controllerType || '--';
                 document.getElementById('systemMode').textContent = data.systemMode || '--';
@@ -281,18 +292,18 @@
         }
 
         function sendCommand(cmd) { 
-            if (!arduinoConnected) alert('Arduino not connected'); 
-            else mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({command:cmd,timestamp:new Date().toISOString()})); 
+            if (!mqttClient || !mqttClient.connected()) { alert('MQTT not connected'); return; }
+            mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({command:cmd,timestamp:new Date().toISOString()})); 
         }
         
         function sendProductionSetpoint() { 
-            if (!arduinoConnected) alert('Arduino not connected'); 
-            else mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({manualProduction:parseFloat(document.getElementById('productionSlider').value)})); 
+            if (!mqttClient || !mqttClient.connected()) { alert('MQTT not connected'); return; }
+            mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({manualProduction:parseFloat(document.getElementById('productionSlider').value)})); 
         }
         
         function sendEconomicSetpoint() { 
-            if (!arduinoConnected) alert('Arduino not connected'); 
-            else mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({economicSetpoint:parseFloat(document.getElementById('economicSlider').value)})); 
+            if (!mqttClient || !mqttClient.connected()) { alert('MQTT not connected'); return; }
+            mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({economicSetpoint:parseFloat(document.getElementById('economicSlider').value)})); 
         }
         
         function updateProductionSlider(v) { document.getElementById('sliderValue').textContent = v + '%'; }
