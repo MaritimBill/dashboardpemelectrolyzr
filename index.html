@@ -207,31 +207,36 @@
         function updateDashboard(data) {
             // Only update if we have actual Arduino data
             if (data && arduinoConnected) {
-                // Map Arduino MQTT fields to dashboard display fields
-                // Arduino sends: prodRateSet, slider, temperature, voltage, current, o2Purity, etc.
-                let prodValue = Math.min(100, Math.max(0, data.prodRateSet || data.slider || data.production || 0));
+                // PRODUCTION RATE: Constrain to 0-100% (NO 211.7!)
+                let prodValue = Math.min(100, Math.max(0, data.prodRateSet || data.slider || 0));
                 updateValue('productionValue', prodValue, '%'); 
                 updateBar('productionBar', prodValue);
+                document.getElementById('productionTarget').textContent = `Target: ${prodValue.toFixed(1)}%`;
                 
-                // Update slider element to sync with Arduino setpoint
+                // Update slider element to sync with Arduino (real-time feedback from device)
                 if (data.slider !== undefined) {
-                    document.getElementById('productionSlider').value = Math.min(100, Math.max(0, data.slider));
-                    document.getElementById('sliderValue').textContent = Math.min(100, Math.max(0, data.slider)) + '%';
+                    let safeSlider = Math.min(100, Math.max(0, data.slider));
+                    document.getElementById('productionSlider').value = safeSlider;
+                    document.getElementById('sliderValue').textContent = safeSlider + '%';
                 }
                 
-                updateValue('efficiencyValue', data.efficiency, '%'); updateBar('efficiencyBar', data.efficiency);
-                updateValue('safetyValue', data.safetyMargin, '%'); updateBar('safetyBar', data.safetyMargin);
-                updateValue('waterValue', data.water_tank_l, '%'); updateBar('waterBar', data.water_tank_l);
-                updateValue('tempValue', data.temperature, '°C'); updateBar('tempBar', data.temperature);
-                updateValue('purityValue', data.o2Purity, '%'); updateBar('purityBar', data.o2Purity);
-                updateValue('oxygenValue', data.o2ProductionRate, '%'); updateBar('oxygenBar', data.o2ProductionRate);
-                updateValue('hydrogenValue', data.h2ProductionRate, '%'); updateBar('hydrogenBar', data.h2ProductionRate);
-                updateValue('reserveValue', data.reserve, '%'); updateBar('reserveBar', data.reserve);
-                if (data.battery) { updateValue('batteryValue', data.battery, 'V'); updateBar('batteryBar', ((data.battery-11)/2)*100); }
-                if (data.prodRateSet) document.getElementById('productionTarget').textContent = `Target: ${data.prodRateSet.toFixed(1)}%`;
-                document.getElementById('powerSource').textContent = data.powerSource || 'Grid';
-                document.getElementById('controllerStatus').textContent = data.controllerType || '--';
-                document.getElementById('systemMode').textContent = data.systemMode || '--';
+                // REAL-TIME O2/H2 SYNC: Display production rates from Arduino
+                let o2Rate = Math.min(100, Math.max(0, data.o2ProductionRate || 0));
+                let h2Rate = Math.min(100, Math.max(0, data.h2ProductionRate || 0));
+                updateValue('oxygenValue', o2Rate, '%'); updateBar('oxygenBar', o2Rate);
+                updateValue('hydrogenValue', h2Rate, '%'); updateBar('hydrogenBar', h2Rate);
+                
+                // OTHER SENSOR VALUES
+                updateValue('efficiencyValue', data.efficiency || 0, '%'); updateBar('efficiencyBar', data.efficiency || 0);
+                updateValue('safetyValue', data.safetyMargin || 85, '%'); updateBar('safetyBar', data.safetyMargin || 85);
+                updateValue('waterValue', data.water_tank_l || 0, '%'); updateBar('waterBar', data.water_tank_l || 0);
+                updateValue('tempValue', data.temperature || 0, '°C'); updateBar('tempBar', Math.min(data.temperature || 0, 100));
+                updateValue('purityValue', data.o2Purity || 0, '%'); updateBar('purityBar', data.o2Purity || 0);
+                updateValue('reserveValue', data.reserve || 70, '%'); updateBar('reserveBar', data.reserve || 70);
+                if (data.battery) { updateValue('batteryValue', data.battery, 'V'); updateBar('batteryBar', Math.min((data.battery/13.2)*100, 100)); }
+                document.getElementById('powerSource').textContent = data.power_source || 'Grid';
+                document.getElementById('controllerStatus').textContent = data.mode || 'IDLE';
+                document.getElementById('systemMode').textContent = data.mode || 'NONE';
             }
         }
 
@@ -292,13 +297,28 @@
         }
 
         function sendCommand(cmd) { 
-            if (!mqttClient || !mqttClient.connected()) { alert('MQTT not connected'); return; }
-            mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({command:cmd,timestamp:new Date().toISOString()})); 
+            if (!mqttClient || !mqttClient.connected()) { 
+                alert('MQTT not connected'); 
+                return; 
+            }
+            // Properly format command for Arduino
+            let cmdObj = { command: cmd.toUpperCase() };
+            let payload = JSON.stringify(cmdObj);
+            console.log('[Web] Sending command:', payload);
+            mqttClient.publish(TOPICS.WEB_CONTROL, payload);
+            console.log('✅ Command sent to Arduino:', cmd);
         }
         
         function sendProductionSetpoint() { 
-            if (!mqttClient || !mqttClient.connected()) { alert('MQTT not connected'); return; }
-            mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({manualProduction:parseFloat(document.getElementById('productionSlider').value)})); 
+            if (!mqttClient || !mqttClient.connected()) { 
+                alert('MQTT not connected'); 
+                return; 
+            }
+            let prodValue = Math.min(100, Math.max(0, parseFloat(document.getElementById('productionSlider').value)));
+            let payload = JSON.stringify({ manualProduction: prodValue });
+            console.log('[Web] Sending production setpoint:', prodValue + '%');
+            mqttClient.publish(TOPICS.WEB_CONTROL, payload);
+            console.log('✅ Production setpoint sent:', prodValue + '%');
         }
         
         function sendEconomicSetpoint() { 
@@ -306,7 +326,14 @@
             mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({economicSetpoint:parseFloat(document.getElementById('economicSlider').value)})); 
         }
         
-        function updateProductionSlider(v) { document.getElementById('sliderValue').textContent = v + '%'; }
+        function updateProductionSlider(v) { 
+            let safeValue = Math.min(100, Math.max(0, parseFloat(v)));
+            document.getElementById('sliderValue').textContent = safeValue + '%'; 
+            // AUTO-SYNC: Send update to Arduino immediately for real-time response
+            if(mqttClient && mqttClient.connected()) {
+                mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({manualProduction: safeValue}));
+            }
+        }
         function updateEconomicSlider(v) { document.getElementById('economicValue').textContent = v + '%'; }
 
         function switchTab(tab) {
