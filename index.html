@@ -153,24 +153,43 @@
             });
 
             mqttClient.on('connect', function() {
+                console.log('✅ Dashboard connected to MQTT broker');
                 updateStatus('mqtt-only', 'Connected to MQTT');
-                mqttClient.subscribe(TOPICS.ARDUINO_DATA);
+                console.log('📋 Subscribing to:', TOPICS.ARDUINO_DATA);
+                mqttClient.subscribe(TOPICS.ARDUINO_DATA, function(err) {
+                    if (err) console.error('❌ Subscribe failed:', err);
+                    else console.log('✅ Subscribed to arduino/sensors');
+                });
             });
 
             mqttClient.on('message', function(topic, message) {
+                console.log('📨 Message received on topic:', topic, 'Length:', message.length);
                 if (topic === TOPICS.ARDUINO_DATA) {
+                    console.log('✅ Correct topic! Processing data...');
                     lastArduinoDataTime = Date.now();
                     if (!arduinoConnected) {
                         arduinoConnected = true;
+                        console.log('🎉 Arduino connected!');
                         updateStatus('connected', 'Connected to Arduino');
                     }
                     processArduinoData(message.toString());
+                } else {
+                    console.log('⚠️ Topic mismatch. Expected:', TOPICS.ARDUINO_DATA, 'Got:', topic);
                 }
             });
 
-            mqttClient.on('error', function() { updateStatus('disconnected', 'Connection failed'); });
-            mqttClient.on('close', function() { updateStatus('disconnected', 'Disconnected'); });
-            mqttClient.on('offline', function() { updateStatus('disconnected', 'Offline'); });
+            mqttClient.on('error', function(err) { 
+                console.error('❌ MQTT Error:', err);
+                updateStatus('disconnected', 'Connection failed'); 
+            });
+            mqttClient.on('close', function() { 
+                console.log('⚠️ MQTT Closed');
+                updateStatus('disconnected', 'Disconnected'); 
+            });
+            mqttClient.on('offline', function() { 
+                console.log('⚠️ MQTT Offline');
+                updateStatus('disconnected', 'Offline'); 
+            });
         }
 
         function checkArduinoConnection() {
@@ -197,11 +216,15 @@
 
         function processArduinoData(message) {
             try { 
+                console.log('🔍 Parsing Arduino data:', message.substring(0, 100) + '...');
                 const data = JSON.parse(message);
+                console.log('✅ Data parsed! Production:', data.prodRateSet, 'Efficiency:', data.efficiency);
                 updateDashboard(data); 
                 updateTrendChart(data);
                 updateLastUpdate(); 
-            } catch(err) { console.error('Error:', err); }
+            } catch(err) { 
+                console.error('❌ Parse error:', err, 'Raw message:', message.substring(0, 100));
+            }
         }
 
         function updateDashboard(data) {
