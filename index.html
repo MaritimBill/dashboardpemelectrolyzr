@@ -115,9 +115,15 @@
 
     <script>
         const MQTT_BROKER = 'wss://broker.hivemq.com:8884/mqtt';
-        const TOPICS = { ARDUINO_DATA: 'arduino/sensors', WEB_CONTROL: 'pem/web/control' };
+        const TOPICS = { 
+            PRIMARY: 'arduino/sensors/primary',
+            SECONDARY: 'arduino/sensors/secondary',
+            STATUS: 'arduino/status',
+            WEB_CONTROL: 'pem/web/control' 
+        };
         let mqttClient = null, trendChart = null, lastArduinoDataTime = 0, arduinoConnected = false;
         let dataHistory = { time: [], production: [], efficiency: [], safetyMargin: [] };
+        let primaryData = {}, secondaryData = {};
 
         // Default static values
         const DEFAULT_VALUES = {
@@ -155,26 +161,71 @@
             mqttClient.on('connect', function() {
                 console.log('✅ Dashboard connected to MQTT broker');
                 updateStatus('mqtt-only', 'Connected to MQTT');
-                console.log('📋 Subscribing to:', TOPICS.ARDUINO_DATA);
-                mqttClient.subscribe(TOPICS.ARDUINO_DATA, function(err) {
-                    if (err) console.error('❌ Subscribe failed:', err);
-                    else console.log('✅ Subscribed to arduino/sensors');
+                // Subscribe to all three topics
+                console.log('📋 Subscribing to new topics');
+                mqttClient.subscribe(TOPICS.PRIMARY, function(err) {
+                    if (err) console.error('❌ Subscribe to PRIMARY failed:', err);
+                    else console.log('✅ Subscribed to arduino/sensors/primary');
+                });
+                mqttClient.subscribe(TOPICS.SECONDARY, function(err) {
+                    if (err) console.error('❌ Subscribe to SECONDARY failed:', err);
+                    else console.log('✅ Subscribed to arduino/sensors/secondary');
+                });
+                mqttClient.subscribe(TOPICS.STATUS, function(err) {
+                    if (err) console.error('❌ Subscribe to STATUS failed:', err);
+                    else console.log('✅ Subscribed to arduino/status');
                 });
             });
 
             mqttClient.on('message', function(topic, message) {
                 console.log('📨 Message received on topic:', topic, 'Length:', message.length);
-                if (topic === TOPICS.ARDUINO_DATA) {
-                    console.log('✅ Correct topic! Processing data...');
+                
+                if (topic === TOPICS.PRIMARY) {
+                    console.log('✅ PRIMARY data received, processing...');
+                    try {
+                        primaryData = JSON.parse(message.toString());
+                        console.log('✅ PRIMARY parsed:', primaryData);
+                    } catch(e) {
+                        console.error('❌ PRIMARY parse error:', e);
+                    }
+                } 
+                else if (topic === TOPICS.SECONDARY) {
+                    console.log('✅ SECONDARY data received, processing...');
+                    try {
+                        secondaryData = JSON.parse(message.toString());
+                        console.log('✅ SECONDARY parsed:', secondaryData);
+                    } catch(e) {
+                        console.error('❌ SECONDARY parse error:', e);
+                    }
+                }
+                else if (topic === TOPICS.STATUS) {
+                    console.log('💚 STATUS heartbeat received');
+                    try {
+                        const statusData = JSON.parse(message.toString());
+                        if (statusData.mqtt_connected) {
+                            // Show GREEN when Arduino confirms MQTT connected
+                            if (!arduinoConnected) {
+                                arduinoConnected = true;
+                                console.log('🎉 Arduino connected! (confirmed by status heartbeat)');
+                                updateStatus('connected', 'Connected to Arduino');
+                            }
+                        }
+                    } catch(e) {
+                        console.error('❌ STATUS parse error:', e);
+                    }
+                }
+                
+                // Merge and process combined data
+                if (Object.keys(primaryData).length > 0 && Object.keys(secondaryData).length > 0) {
+                    const mergedData = { ...primaryData, ...secondaryData };
+                    console.log('🔀 Merged data from both publishes:', mergedData);
                     lastArduinoDataTime = Date.now();
                     if (!arduinoConnected) {
                         arduinoConnected = true;
                         console.log('🎉 Arduino connected!');
                         updateStatus('connected', 'Connected to Arduino');
                     }
-                    processArduinoData(message.toString());
-                } else {
-                    console.log('⚠️ Topic mismatch. Expected:', TOPICS.ARDUINO_DATA, 'Got:', topic);
+                    processArduinoData(JSON.stringify(mergedData));
                 }
             });
 
@@ -328,7 +379,7 @@
             let cmdObj = { command: cmd.toUpperCase() };
             let payload = JSON.stringify(cmdObj);
             console.log('[Web] Sending command:', payload);
-            mqttClient.publish(TOPICS.WEB_CONTROL, payload);
+            mqttClient.publish('pem/control', payload);
             console.log('✅ Command sent to Arduino:', cmd);
         }
         
@@ -340,13 +391,13 @@
             let prodValue = Math.min(100, Math.max(0, parseFloat(document.getElementById('productionSlider').value)));
             let payload = JSON.stringify({ manualProduction: prodValue });
             console.log('[Web] Sending production setpoint:', prodValue + '%');
-            mqttClient.publish(TOPICS.WEB_CONTROL, payload);
+            mqttClient.publish('web/control', payload);
             console.log('✅ Production setpoint sent:', prodValue + '%');
         }
         
         function sendEconomicSetpoint() { 
             if (!mqttClient || !mqttClient.connected()) { alert('MQTT not connected'); return; }
-            mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({economicSetpoint:parseFloat(document.getElementById('economicSlider').value)})); 
+            mqttClient.publish('web/control', JSON.stringify({economicSetpoint:parseFloat(document.getElementById('economicSlider').value)})); 
         }
         
         function updateProductionSlider(v) { 
@@ -354,7 +405,7 @@
             document.getElementById('sliderValue').textContent = safeValue + '%'; 
             // AUTO-SYNC: Send update to Arduino immediately for real-time response
             if(mqttClient && mqttClient.connected()) {
-                mqttClient.publish(TOPICS.WEB_CONTROL, JSON.stringify({manualProduction: safeValue}));
+                mqttClient.publish('web/control', JSON.stringify({manualProduction: safeValue}));
             }
         }
         function updateEconomicSlider(v) { document.getElementById('economicValue').textContent = v + '%'; }
